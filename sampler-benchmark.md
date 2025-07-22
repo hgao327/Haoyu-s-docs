@@ -77,7 +77,7 @@ Answer:<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
 ### vLLM Testing Strategy
 
-In this performance benchmark, we selected the industry-leading vLLM inference framework to precisely evaluate model performance on the GSM8K dataset for high-throughput scenarios. We utilize the `vllm.generate` method, passing all test prompts at once.
+In this performance benchmark, we selected the vLLM inference framework to precisely evaluate model performance on the GSM8K dataset for high-throughput scenarios. We utilize the `vllm.generate` method and 'JAX' backend, passing all test prompts at once.
 
 **Strategy Rationale**:
 
@@ -124,9 +124,9 @@ python vllm_test.py \
 
 | Parameter Category        | Parameter   | Test Values | Description                       |
 | ------------------------- | ----------- | ----------- | --------------------------------- |
-| **Generation Parameters** | max_tokens  | 64, 256     | Maximum generation length         |
+| **Generation Parameters** | max_tokens  | 64 | 256     | Maximum generation length         |
 |                           | cache_size  | 512         | KV cache size                     |
-| **Batch Parameters**      | batch_size  | 1, 10, 50   | Batch processing size             |
+| **Batch Parameters**      | batch_size  | 1 | 10 | 50   | Batch processing size             |
 | **Sampling Parameters**   | temperature | 0.0         | Deterministic sampling (inferred) |
 |                           | echo        | False       | Return generated content only     |
 
