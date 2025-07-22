@@ -77,7 +77,7 @@ Answer:<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
 ### vLLM Testing Strategy
 
-In this performance benchmark, we selected the vLLM inference framework to precisely evaluate model performance on the GSM8K dataset for high-throughput scenarios. We utilize the `vllm.generate` method and 'JAX' backend, passing all test prompts at once.
+In this performance benchmark, we selected the vLLM inference framework to precisely evaluate model performance on the GSM8K dataset for high-throughput scenarios. We utilize the `vllm.generate` method and `JAX` backend, passing all test prompts at once.
 
 **Strategy Rationale**:
 
