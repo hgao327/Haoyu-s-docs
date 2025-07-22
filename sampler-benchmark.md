@@ -124,9 +124,9 @@ python vllm_test.py \
 
 | Parameter Category        | Parameter   | Test Values | Description                       |
 | ------------------------- | ----------- | ----------- | --------------------------------- |
-| **Generation Parameters** | max_tokens  | 64 | 256     | Maximum generation length         |
+| **Generation Parameters** | max_tokens  | 64 & 256     | Maximum generation length         |
 |                           | cache_size  | 512         | KV cache size                     |
-| **Batch Parameters**      | batch_size  | 1 | 10 | 50   | Batch processing size             |
+| **Batch Parameters**      | batch_size  | 1 & 10 & 50   | Batch processing size             |
 | **Sampling Parameters**   | temperature | 0.0         | Deterministic sampling (inferred) |
 |                           | echo        | False       | Return generated content only     |
 
