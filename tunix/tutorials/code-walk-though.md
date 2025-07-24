@@ -874,3 +874,213 @@ if model_mesh != mesh:
 | `get_pytree_mesh_info` | 获取参数在哪个 mesh 上，辅助判断是否需要 reshard |
 
 这些函数在 Tunix 的权重同步、参数迁移、模型加载中非常关键，特别是在多设备并行场景下。
+
+
+ GRPO 在整个框架中的**训练函数调用流程**以及**详细结构化调用链**。
+
+------
+
+# 🌐 整体结构概览
+
+我们将训练流程分为以下模块：
+
+| 模块                                | 作用                                                 |
+| ----------------------------------- | ---------------------------------------------------- |
+| **1. Optimizer + Config 构建**      | 配置训练参数和模型优化器                             |
+| **2. RLCluster 初始化**             | 加载模型、构建 rollout、trainer、inference 组件      |
+| **3. GrpoLearner 初始化**           | 构建训练者，注册 reward function，准备采样与训练循环 |
+| **4. 主训练循环 `.train()`**        | 每轮采样 → 打分 → 训练 → 参数同步                    |
+| **5. 数据生成与 Advantage 计算**    | 完成 sample、reward、advantage 并构建训练样本        |
+| **6. 训练 update actor + 参数同步** | 使用 PPO loss 训练 actor，并同步 sampler 参数        |
+
+------
+
+## 1️⃣ Optimizer & ClusterConfig 构建
+
+```python
+optimizer = optax.chain(
+    optax.clip_by_global_norm(MAX_GRAD_NORM),
+    optax.adamw(
+        learning_rate=optax.schedules.warmup_cosine_decay_schedule(...),
+        ...
+    )
+)
+
+cluster_config = rl_cluster_lib.ClusterConfig(
+    role_to_mesh={...},  # actor, rollout, reference mesh
+    rollout_engine='vanilla',
+    training_config=RLTrainingConfig(...),
+    rollout_config=RolloutConfig(...),
+)
+```
+
+------
+
+## 2️⃣ RLCluster 初始化
+
+```python
+rl_cluster = RLCluster(
+    actor=lora_model,
+    reference=base_model,
+    tokenizer=tokenizer,
+    cluster_config=cluster_config,
+)
+```
+
+### → RLCluster 构造过程：
+
+#### [a] `_load_model(...)`
+
+- 如果模型已有 mesh 但不同，则通过：
+
+  ```python
+  reshard.reshard_pytree(...) → jax.sharding.NamedSharding
+  ```
+
+  重排参数到新 mesh
+
+#### [b] `_init_cluster()`
+
+构建内部模块：
+
+```python
+self._rollout = VanillaRollout(...)      # 采样用
+self._actor_trainer = Trainer(...)       # actor 更新
+self._inference_worker = InferenceWorker(...)  # KL/reward 用
+```
+
+------
+
+## 3️⃣ GrpoLearner 初始化
+
+```python
+grpo_trainer = GrpoLearner(
+    rl_cluster=rl_cluster,
+    reward_fns=[...],
+    grpo_config=GrpoConfig(...)
+)
+```
+
+- `reward_fns` 是多个函数组成的列表，如：
+
+  ```python
+  def check_answer(prompt, completion) -> float: ...
+  ```
+
+------
+
+## 4️⃣ `.train(dataset)` 主循环调用链
+
+```python
+grpo_trainer.train(dataset)
+```
+
+展开为：
+
+```python
+train_data_queue = SimpleDataQueue()
+executor.submit(prepare_dataset, ..., train_data_queue)
+
+while True:
+    train_ds = train_data_queue.get()
+    if train_ds is None: break
+    rl_cluster.update_actor(train_ds, ...)
+    rl_cluster.sync_weights()
+```
+
+------
+
+## 5️⃣ `prepare_dataset` 数据生成流程（异步线程）
+
+```python
+def prepare_dataset(...):
+    for prompt in prompts:
+        completions = rollout.generate(prompt)
+        rewards = [f(prompt, c) for f in reward_fns for c in completions]
+        advantages = compute_advantages(rewards)
+        train_ds = construct_train_dataset(prompt, completions, advantages)
+        train_data_queue.put(train_ds)
+    train_data_queue.put(None)
+```
+
+### ▶️ `rollout.generate(prompts)`：
+
+实际调用栈：
+
+```python
+RLCluster → self._rollout.generate(prompts)
+VanillaRollout → self._sampler(...)  # 调用 Transformer 生成 token
+```
+
+------
+
+## 6️⃣ `update_actor()` 模型训练过程
+
+```python
+def update_actor(self, train_ds):
+    with self.mesh:
+        self.actor_trainer.train(train_ds)
+```
+
+### ▶️ `.train(...)`：
+
+调用继承自 `PeftTrainer` 的接口：
+
+```python
+Trainer → PeftTrainer.train():
+    for batch in train_ds:
+        loss, aux = loss_fn(params, batch)
+        grads = grad(loss)
+        updates = optimizer.update(grads)
+        apply_updates(...)
+        _post_process_train_step(aux)  # log RL metrics
+```
+
+#### loss 具体逻辑（在 `grpo_loss_fn` 或 `ppo_loss_fn`）：
+
+```python
+loss = policy_loss + β * KL_divergence(old_policy, ref_policy)
+```
+
+------
+
+## 7️⃣ `sync_weights()`：同步 rollout 与 trainer 参数
+
+```python
+src_params = nnx.state(actor_trainer.model, nnx.Param)
+dst_params = nnx.state(rollout.model(), nnx.Param)
+resharded_params = reshard_pytree(src_params, dst_params)
+rollout.update_params(resharded_params)
+```
+
+- 对于 LoRA，还会同步 LoRAParam 而非 Param
+
+------
+
+## ✅ 总结调用链图
+## 
+
+```text
+Main
+├── optimizer = optax.chain(...)
+├── cluster_config = ClusterConfig(...)
+├── rl_cluster = RLCluster(...)
+│   ├── _load_model(): 可能调用 reshard_pytree
+│   └── _init_cluster()
+│       ├── VanillaRollout()
+│       ├── Trainer()
+│       └── InferenceWorker()
+├── grpo_trainer = GrpoLearner(...)
+└── grpo_trainer.train(dataset)
+    ├── prepare_dataset(...)  # 线程1
+    │   ├── rollout.generate() → Sampler(...)
+    │   ├── reward_fn(p, c)
+    │   └── compute_advantages()
+    └── while loop:           # 主线程
+        ├── rl_cluster.update_actor()
+        │   └── Trainer.train() → optimizer.update() + loss
+        └── rl_cluster.sync_weights()
+            └── rollout.update_params()
+```
+
+
