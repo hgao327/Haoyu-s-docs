@@ -779,7 +779,7 @@ self.metrics_logger.log(metric_name, aux[metric_key], mode, steps)
 
 ------
 
-#### ✅ 总结作用（简洁）
+#### ✅ 总结
 
 这个 `Trainer` 是 `PeftTrainer` 的 RL 加强版，专门为 **GRPO/PPO 强化学习训练过程**增加：
 
@@ -796,7 +796,6 @@ rl_cluster.actor_trainer.with_rl_metrics_to_log(...)
 
 把 loss 函数、指标接入进来的。
 
-是否需要我讲它如何调用 `train_step()`、或结合完整训练 loop 展示调用路径？
 
 
 
