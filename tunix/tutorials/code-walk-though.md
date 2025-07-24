@@ -1,6 +1,6 @@
 # Google Tunix 源码分析
 
-### 1. tunix/rl/grpo/grpo_learner.py
+### 1. `tunix/rl/grpo/grpo_learner.py`
 
 ####  `train()`：主训练循环
 
@@ -85,7 +85,7 @@
 
 
 
-### 2. tunix/rl/inference/inference_worker.py
+### `2. tunix/rl/inference/inference_worker.py`
 
 这段代码位于 `tunix.rl` 模块，定义了一个名为 `InferenceWorker` 的类，用于托管在强化学习中推理阶段会用到的模型，例如：
 
@@ -193,7 +193,7 @@ def compute_values(self):
 
 
 
-### 3. tunix/rl/queue/data_queue.py
+### 3. `tunix/rl/queue/data_queue.py`
 
 ------
 
@@ -252,7 +252,9 @@ while True:
 
 
 
-### 4. tunix/rl/rollout/vanilla_rollout.py
+
+
+### 4. `tunix/rl/rollout/vanilla_rollout.py`
 
 这段代码实现了 Tunix 中的 **Vanilla Rollout Worker**，用于**从 actor 模型生成文本**（也就是推理 / rollout）并支持 KV Cache 管理和 token logp 的计算。是整个 GRPO / PPO 强化学习中的**核心生成模块**。
 
@@ -366,7 +368,7 @@ def model(self) -> nnx.Module:
 
 
 
-### 5. tunix/rl/common.py
+### 5. `tunix/rl/common.py`
 
 这段代码是 Tunix 中 RL 训练所用的**通用辅助函数集合**，用于处理：
 
@@ -475,7 +477,10 @@ positions = jnp.cumsum(input_mask, axis=-1) - 1
 
 
 
-### 6. tunix/rl/reshard.py
+
+
+
+### 6. `tunix/rl/reshard.py`
 
 这段代码提供了 **JAX 中用于跨 mesh 或跨 sharding 的参数迁移（resharding）功能**，是 Tunix 框架中支持多设备训练（尤其是 TPUs）时的重要组件。
 
@@ -568,7 +573,7 @@ callback_on_ready(resharded_array, on_success, on_failure)
 
 
 
-### 7. tunix/rl/rl_cluster.py
+### 7. `tunix/rl/rl_cluster.py`
 
 这段代码定义了 `RLCluster` 类，是 Tunix 框架中面向用户的**核心接口类**，用于管理和协调 RLHF / GRPO 强化学习训练中涉及的多个模型与子组件。
 
@@ -683,7 +688,7 @@ rollout.update_params(...)
 
 
 
-### 8. tunix/rl/trainer.py
+### 8. `tunix/rl/trainer.py`
 
 这段代码定义了 `Trainer` 类，是强化学习中对 `PeftTrainer` 的一个扩展版本，核心目的是为 **RL 训练过程添加日志记录和进度条显示功能**。
 
@@ -801,7 +806,7 @@ rl_cluster.actor_trainer.with_rl_metrics_to_log(...)
 
 
 
-### 9. tunix/rl/utils.py
+### 9. `tunix/rl/utils.py`
 
 这段代码是 GRPO（Group Relative Policy Optimization）中的辅助工具，用于处理：
 
