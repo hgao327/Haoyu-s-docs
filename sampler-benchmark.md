@@ -173,16 +173,18 @@ python vllm_test.py \
 
 ## Performance Comparison Table
 
-| Framework | Configuration            | Total Time(s) | Request Throughput(req/s) | Token Throughput(tokens/s) | Avg Latency(ms) | Input Tokens | Generated Tokens | Total Tokens |
-| --------- | ------------------------ | ------------- | ------------------------- | -------------------------- | --------------- | ------------ | ---------------- | ------------ |
-| **vLLM**  | Default config           | 107.71        | 12.25                     | 1,974.50                   | 81.66           | 84,015       | 128,661          | 212,676      |
-| **Tunix** | max_tokens=64, batch=1   | 579.79        | 2.27                      | 374.57                     | 439.57          | 130,180      | 86,993           | 217,173      |
-| **Tunix** | max_tokens=64, batch=10  | 350.59        | 3.76                      | 619.44                     | 265.80          | 130,180      | 86,991           | 217,171      |
-| **Tunix** | max_tokens=64, batch=50  | 267.53        | 4.93                      | 811.77                     | 202.83          | 130,180      | 86,992           | 217,172      |
-| **Tunix** | max_tokens=256, batch=1  | 1,224.72      | 1.08                      | 278.07                     | 928.52          | 130,180      | 210,378          | 340,558      |
-| **Tunix** | max_tokens=256, batch=10 | 473.41        | 2.79                      | 720.68                     | 358.92          | 130,180      | 210,998          | 341,178      |
-| **Tunix** | max_tokens=256, batch=50 | 323.17        | 4.08                      | 1,055.94                   | 245.01          | 130,180      | 211,070          | 341,250      |
 
+| Rank | Framework | Configuration            | Request Throughput (req/s) | vs Best          | Token Throughput (tok/s) | vs Best         | Avg Latency (ms) | vs Best          | Total Time (s) |
+| ---- | --------- | ------------------------ | -------------------------- | ---------------- | ------------------------ | --------------- | ---------------- | ---------------- | -------------- |
+| 1    | **vLLM**  | Default config           | **12.25**                  | **1.0x**         | **1,974.50**             | **1.0x**        | **81.66**        | **1.0x**         | **107.71**     |
+| 2    | Tunix     | max_tokens=64, batch=50  | 4.93                       | **2.5x slower**  | 811.77                   | **2.4x slower** | 202.83           | **2.5x slower**  | 267.53         |
+| 3    | Tunix     | max_tokens=256, batch=50 | 4.08                       | **3.0x slower**  | 1,055.94                 | **1.9x slower** | 245.01           | **3.0x slower**  | 323.17         |
+| 4    | Tunix     | max_tokens=64, batch=10  | 3.76                       | **3.3x slower**  | 619.44                   | **3.2x slower** | 265.80           | **3.3x slower**  | 350.59         |
+| 5    | Tunix     | max_tokens=256, batch=10 | 2.79                       | **4.4x slower**  | 720.68                   | **2.7x slower** | 358.92           | **4.4x slower**  | 473.41         |
+| 6    | Tunix     | max_tokens=64, batch=1   | 2.27                       | **5.4x slower**  | 374.57                   | **5.3x slower** | 439.57           | **5.4x slower**  | 579.79         |
+| 7    | Tunix     | max_tokens=256, batch=1  | 1.08                       | **11.3x slower** | 278.07                   | **7.1x slower** | 928.52           | **11.4x slower** | 1,224.72       |
+
+## 
 ## Appendix
 
 ### Test Commands
