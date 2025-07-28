@@ -7,7 +7,7 @@ This document presents a comprehensive benchmark design and results for Large La
 ## Test Environment
 
 - **Hardware Platform**: TPU v5e-4
-- **Test Models**: Llama-3.1-8B, Qwen2-7B
+- **Test Models**: Llama-3.1-8B
 - **Dataset**: GSM8K (Grade School Math 8K)
 - **Test Samples**: 1,319 mathematical reasoning problems
 
@@ -77,18 +77,18 @@ Answer:<|eot_id|><|start_header_id|>assistant<|end_header_id|>
 
 ### vLLM Testing Strategy
 
-In this performance benchmark, we selected the vLLM inference framework to precisely evaluate model performance on the GSM8K dataset for high-throughput scenarios. We utilize the `vllm.generate` method and `JAX` backend, passing all test prompts at once.
+We utilize the `vllm.generate` method and `JAX` backend, passing all test prompts at once.
 
-**Strategy Rationale**:
+```shell
+TPU_BACKEND_TYPE=jax
+MODEL_IMPL_TYPE=flax_nnx
+```
 
-- **PagedAttention**: Efficient attention mechanism memory management
-- **Continuous Batching**: Token-level dynamic scheduling
-- **Global Optimization**: Fully leverage vLLM's internal scheduler for resource optimization
-- **Hardware Utilization Maximization**: Eliminate GPU idle time, improve overall throughput
+**Strategy Rationale**: Includes all default optimization(PagedAttention, Continuous Batching, Global Optimization, etc)
 
 ### Tunix Testing Strategy
 
-For the Tunix framework, we adopted a more fine-grained control strategy:
+For the Tunix framework:
 
 1. **Model Loading**: Use `tunix.models.llama.params.create_model_from_safe_tensors` API to load from local checkpoints
 2. **Sharding Strategy**: Apply TP/FSDP sharding optimization
@@ -124,9 +124,9 @@ python vllm_test.py \
 
 | Parameter Category        | Parameter   | Test Values | Description                       |
 | ------------------------- | ----------- | ----------- | --------------------------------- |
-| **Generation Parameters** | max_tokens  | 64 & 256     | Maximum generation length         |
+| **Generation Parameters** | max_tokens  | 64 & 256    | Maximum generation length         |
 |                           | cache_size  | 512         | KV cache size                     |
-| **Batch Parameters**      | batch_size  | 1 & 10 & 50   | Batch processing size             |
+| **Batch Parameters**      | batch_size  | 1 & 10 & 50 | Batch processing size             |
 | **Sampling Parameters**   | temperature | 0.0         | Deterministic sampling (inferred) |
 |                           | echo        | False       | Return generated content only     |
 
@@ -169,37 +169,9 @@ python vllm_test.py \
 | batch_size=10      | 473.41        | 2.79                      | 720.68                     | 358.92          |
 | batch_size=50      | 323.17        | 4.08                      | 1,055.94                   | 245.01          |
 
-### Qwen2-7B Performance Comparison
 
-#### vLLM Performance
 
-```
-[Overall Summary]
-  Total Time:                 117.66 s
-  Number of Prompts:          1,319
-
-[Latency Metrics]
-  Avg. Latency per Request:   89.20 ms/request
-
-[Token Stats]
-  Total Input Tokens:         85,776
-  Total Generated Tokens:     222,609
-  Grand Total Tokens:         308,385
-
-[Throughput Metrics]
-  Request Throughput:         11.21 requests/sec
-  Input Token Throughput:     729.01 tokens/sec
-  Output Token Throughput:    1,891.96 tokens/sec
-  Total Token Throughput:     2,620.98 tokens/sec
-```
-
-#### Tunix Performance
-
-*Qwen2-7B Tunix test results pending*
-
-## Performance Comparison Summary
-
-### Llama-3.1-8B Complete Comparison Table
+## Performance Comparison Table
 
 | Framework | Configuration            | Total Time(s) | Request Throughput(req/s) | Token Throughput(tokens/s) | Avg Latency(ms) | Input Tokens | Generated Tokens | Total Tokens |
 | --------- | ------------------------ | ------------- | ------------------------- | -------------------------- | --------------- | ------------ | ---------------- | ------------ |
@@ -210,13 +182,6 @@ python vllm_test.py \
 | **Tunix** | max_tokens=256, batch=1  | 1,224.72      | 1.08                      | 278.07                     | 928.52          | 130,180      | 210,378          | 340,558      |
 | **Tunix** | max_tokens=256, batch=10 | 473.41        | 2.79                      | 720.68                     | 358.92          | 130,180      | 210,998          | 341,178      |
 | **Tunix** | max_tokens=256, batch=50 | 323.17        | 4.08                      | 1,055.94                   | 245.01          | 130,180      | 211,070          | 341,250      |
-
-### Qwen2-7B Complete Comparison Table
-
-| Framework | Configuration  | Total Time(s) | Request Throughput(req/s) | Token Throughput(tokens/s) | Avg Latency(ms) | Input Tokens | Generated Tokens | Total Tokens |
-| --------- | -------------- | ------------- | ------------------------- | -------------------------- | --------------- | ------------ | ---------------- | ------------ |
-| **vLLM**  | Default config | 117.66        | 11.21                     | 2,620.98                   | 89.20           | 85,776       | 222,609          | 308,385      |
-| **Tunix** | Pending test   | -             | -                         | -                          | -               | -            | -                | -            |
 
 ## Appendix
 
