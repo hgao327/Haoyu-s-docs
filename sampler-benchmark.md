@@ -4,6 +4,19 @@
 
 This document presents a comprehensive benchmark design and results for Large Language Model (LLM) inference performance. The primary objective is to compare the Vanilla Sampler integrated within the Tunix framework against the vLLM Sampler on Google's Tensor Processing Unit (TPU) hardware. The evaluation encompasses popular LLM models to thoroughly assess performance bottlenecks and optimization benefits under different configurations.
 
+## Performance Comparison Table
+
+| Rank | Framework | Configuration            | Request Throughput (req/s) | vs Best          | Token Throughput (tok/s) | vs Best         | Avg Latency (ms) | vs Best          | Total Time (s) |
+| ---- | --------- | ------------------------ | -------------------------- | ---------------- | ------------------------ | --------------- | ---------------- | ---------------- | -------------- |
+| 1    | **vLLM**  | Default config           | **12.25**                  | **1.0x**         | **1,974.50**             | **1.0x**        | **81.66**        | **1.0x**         | **107.71**     |
+| 2    | Tunix     | max_tokens=64, batch=50  | 4.93                       | **2.5x slower**  | 811.77                   | **2.4x slower** | 202.83           | **2.5x slower**  | 267.53         |
+| 3    | Tunix     | max_tokens=256, batch=50 | 4.08                       | **3.0x slower**  | 1,055.94                 | **1.9x slower** | 245.01           | **3.0x slower**  | 323.17         |
+| 4    | Tunix     | max_tokens=64, batch=10  | 3.76                       | **3.3x slower**  | 619.44                   | **3.2x slower** | 265.80           | **3.3x slower**  | 350.59         |
+| 5    | Tunix     | max_tokens=256, batch=10 | 2.79                       | **4.4x slower**  | 720.68                   | **2.7x slower** | 358.92           | **4.4x slower**  | 473.41         |
+| 6    | Tunix     | max_tokens=64, batch=1   | 2.27                       | **5.4x slower**  | 374.57                   | **5.3x slower** | 439.57           | **5.4x slower**  | 579.79         |
+| 7    | Tunix     | max_tokens=256, batch=1  | 1.08                       | **11.3x slower** | 278.07                   | **7.1x slower** | 928.52           | **11.4x slower** | 1,224.72       |
+
+
 ## Test Environment
 
 - **Hardware Platform**: TPU v5e-4
@@ -170,21 +183,6 @@ python vllm_test.py \
 | batch_size=50      | 323.17        | 4.08                      | 1,055.94                   | 245.01          |
 
 
-
-## Performance Comparison Table
-
-
-| Rank | Framework | Configuration            | Request Throughput (req/s) | vs Best          | Token Throughput (tok/s) | vs Best         | Avg Latency (ms) | vs Best          | Total Time (s) |
-| ---- | --------- | ------------------------ | -------------------------- | ---------------- | ------------------------ | --------------- | ---------------- | ---------------- | -------------- |
-| 1    | **vLLM**  | Default config           | **12.25**                  | **1.0x**         | **1,974.50**             | **1.0x**        | **81.66**        | **1.0x**         | **107.71**     |
-| 2    | Tunix     | max_tokens=64, batch=50  | 4.93                       | **2.5x slower**  | 811.77                   | **2.4x slower** | 202.83           | **2.5x slower**  | 267.53         |
-| 3    | Tunix     | max_tokens=256, batch=50 | 4.08                       | **3.0x slower**  | 1,055.94                 | **1.9x slower** | 245.01           | **3.0x slower**  | 323.17         |
-| 4    | Tunix     | max_tokens=64, batch=10  | 3.76                       | **3.3x slower**  | 619.44                   | **3.2x slower** | 265.80           | **3.3x slower**  | 350.59         |
-| 5    | Tunix     | max_tokens=256, batch=10 | 2.79                       | **4.4x slower**  | 720.68                   | **2.7x slower** | 358.92           | **4.4x slower**  | 473.41         |
-| 6    | Tunix     | max_tokens=64, batch=1   | 2.27                       | **5.4x slower**  | 374.57                   | **5.3x slower** | 439.57           | **5.4x slower**  | 579.79         |
-| 7    | Tunix     | max_tokens=256, batch=1  | 1.08                       | **11.3x slower** | 278.07                   | **7.1x slower** | 928.52           | **11.4x slower** | 1,224.72       |
-
-## 
 ## Appendix
 
 ### Test Commands
