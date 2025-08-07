@@ -33,8 +33,8 @@
 
 | Metric | Value | Conclusion |
 |--------|-------|------------|
-| `val-core/gsm8k/reward/mean@1` | 0.64291 | Good validation reward, training is effective |
-| `critic/rewards/mean` | 0.89863 | High average reward, quality generation |
+| `val-core/gsm8k/reward/mean@1` | 0.64291 | Final validation reward |
+| `critic/rewards/mean` | 0.89863 | Final average reward, quality generation |
 | `critic/advantages/mean` | -0.01817 | Advantage is near 0, close to reference policy |
 | `critic/returns/mean` | -0.01817 | Return is stable, no drastic change |
 
