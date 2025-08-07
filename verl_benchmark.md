@@ -22,9 +22,9 @@
 | Metric | Value | Conclusion |
 |--------|-------|------------|
 | `actor/lr` | 0.0 | Learning rate decayed to 0, training ended |
-| `actor/pg_loss` | -0.00012 | Policy updates are minimal, indicates convergence |
+| **`actor/pg_loss`** | **-0.00012** | Policy updates are minimal, indicates convergence |
 | `actor/pg_clipfrac` | 0.00083 | Almost no updates were clipped, stable policy |
-| `actor/entropy` | 0.05091 | Low entropy, policy is deterministic |
+| **`actor/entropy`** | **0.05091** | Low entropy, policy is deterministic |
 | `actor/kl_loss` | 0.00329 | Very small KL divergence, minimal deviation from reference policy |
 
 **Conclusion**: Model has converged, policy is stable and learning has mostly stopped.
@@ -46,7 +46,7 @@
 |--------|-------|
 | `perf/mfu/actor` | 0.0654 |
 | `perf/throughput` | 2,092.46 tokens/s |
-| `perf/time_per_step` | 88.7s |
+| **`perf/time_per_step`** | **88.7s** |
 | `timing_s/generate_sequences` | 18.6s |
 | `timing_s/update_actor` | 27.3s |
 
