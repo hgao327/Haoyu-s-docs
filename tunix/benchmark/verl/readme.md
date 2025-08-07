@@ -80,3 +80,4 @@ exit 退出container
 sudo systemctl restart docker
 docker restart verl
 docker exec -it verl bash #重新进入
+!
