@@ -1,3 +1,144 @@
+# veRL Benchmark Report: GRPO + LLaMA3.2-1B on GSM8K
+
+## Experimental Configuration
+
+| Item | Configuration |
+|------|---------------|
+| **Environment** | GPU H100 × 8 |
+| **Framework** | veRL |
+| **Algorithm** | GRPO (Group Relative Policy Optimization) |
+| **Model** | LLaMA3.2-1B |
+| **Task** | GSM8K |
+| **Training Steps** | 105 global steps |
+| **Training Time** | Approximately 2h10min |
+| **Wandb** |  [Wandb Log](https://wandb.ai/haoyugao-google/verl_grpo_example_gsm8k/runs/w73j5mdv/workspace?nw=nwuserhaoyugao)  |
+
+---
+
+## Training Results Analysis
+
+### 1. Convergence Metrics
+
+| Metric | Value | Conclusion |
+|--------|-------|------------|
+| `actor/lr` | 0.0 | Learning rate decayed to 0, training ended |
+| **`actor/pg_loss`** | **-0.00012** | Policy updates are minimal, indicates convergence |
+| `actor/pg_clipfrac` | 0.00083 | Almost no updates were clipped, stable policy |
+| **`actor/entropy`** | **0.05091** | Low entropy, policy is deterministic |
+| `actor/kl_loss` | 0.00329 | Very small KL divergence, minimal deviation from reference policy |
+
+**Conclusion**: Model has converged, policy is stable and learning has mostly stopped.
+
+### 2. Performance Metrics
+
+| Metric | Value | Conclusion |
+|--------|-------|------------|
+| `val-core/gsm8k/reward/mean@1` | 0.64291 | Final validation reward |
+| `critic/rewards/mean` | 0.89863 | Final average reward, quality generation |
+| `critic/advantages/mean` | -0.01817 | Advantage is near 0, close to reference policy |
+| `critic/returns/mean` | -0.01817 | Return is stable, no drastic change |
+
+**Conclusion**: Training significantly improved model performance.
+
+### 3. Efficiency Metrics
+
+| Metric | Value |
+|--------|-------|
+| `perf/mfu/actor` | 0.0654 |
+| `perf/throughput` | 2,092.46 tokens/s |
+| **`perf/time_per_step`** | **88.7s** |
+| `timing_s/generate_sequences` | 18.6s |
+| `timing_s/update_actor` | 27.3s |
+
+### 4. Input/Output Length
+
+| Metric | Value |
+|--------|-------|
+| `prompt_length/mean` | 106.77 |
+| `response_length/mean` | 183.24 |
+| `response_length/clip_ratio` | 0.00293 |
+
+---
+
+## Metric Definitions
+
+### Convergence Metrics
+- **`actor/lr`**: Current learning rate of the policy model
+- **`actor/pg_loss`**: Policy gradient loss; near-zero means little update
+- **`actor/pg_clipfrac`**: Fraction of updates that were clipped
+- **`actor/entropy`**: Entropy of the policy distribution; low = deterministic output
+- **`actor/kl_loss`**: KL divergence from the reference policy
+
+### Performance Metrics
+- **`val-core/gsm8k/reward/mean@1`**: Average reward on the validation set
+- **`critic/rewards/mean`**: Average reward of generated samples
+- **`critic/advantages/mean`**: Mean advantage; positive = better than baseline
+- **`critic/returns/mean`**: Mean return (cumulative discounted reward)
+
+### Efficiency Metrics
+- **`perf/mfu/actor`**: GPU Memory-FLOP utilization
+- **`perf/throughput`**: Tokens processed per second
+- **`perf/time_per_step`**: Wall time per training step
+- **`timing_s/generate_sequences`**: Time spent generating model outputs
+- **`timing_s/update_actor`**: Time spent updating the actor model
+
+### Length Metrics
+- **`prompt_length/mean`**: Average prompt token length
+- **`response_length/mean`**: Average generated response length
+- **`response_length/clip_ratio`**: Fraction of responses that were truncated
+
+
+
+
+## Test config
+
+```shell
+set -x
+
+python3 -m verl.trainer.main_ppo \
+    algorithm.adv_estimator=grpo \
+    data.train_files=$HOME/data/gsm8k/train.parquet \
+    data.val_files=$HOME/data/gsm8k/test.parquet \
+    data.train_batch_size=1024 \
+    data.max_prompt_length=512 \
+    data.max_response_length=1024 \
+    data.filter_overlong_prompts=True \
+    data.truncation='error' \
+    actor_rollout_ref.model.path=meta-llama/Llama-3.2-1B-Instruct \
+    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.model.use_remove_padding=True \
+    actor_rollout_ref.actor.ppo_mini_batch_size=256 \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.actor.use_kl_loss=True \
+    actor_rollout_ref.actor.kl_loss_coef=0.001 \
+    actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+    actor_rollout_ref.actor.entropy_coeff=0 \
+    actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    actor_rollout_ref.actor.fsdp_config.param_offload=False \
+    actor_rollout_ref.actor.fsdp_config.optimizer_offload=False \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+    actor_rollout_ref.rollout.name=vllm \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
+    actor_rollout_ref.rollout.n=5 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.ref.fsdp_config.param_offload=True \
+    algorithm.use_kl_in_reward=False \
+    trainer.critic_warmup=0 \
+    trainer.logger='["console","wandb"]' \
+    trainer.project_name='verl_grpo_example_gsm8k' \
+    trainer.experiment_name='llama3_1b_function_rm' \
+    trainer.n_gpus_per_node=8 \
+    trainer.nnodes=1 \
+    trainer.save_freq=20 \
+    trainer.test_freq=5 \
+    trainer.total_epochs=15 $@
+```
+
+
+
+## Training result log
+
 ```
 Training Progress: 100%|██████████| 105/105 [2:10:46<00:00, 74.73s/it]
 (TaskRunner pid=67763) wandb:                                                                                
