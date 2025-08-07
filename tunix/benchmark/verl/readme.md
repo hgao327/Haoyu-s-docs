@@ -1,83 +1,97 @@
 # VERL Benchmark Setup Guide
 
-这份指南将指导你如何设置 VERL 基准测试环境，包括 Docker 配置、数据集下载、账户登录和脚本运行。
 
-### **步骤 1: 配置 Docker 根目录**
+## Step 1: Configure Docker Root Directory
 
-由于基准测试将在 Docker 容器中进行，你需要首先配置一个宿主机上的目录，用于与容器共享。这通常用于存储代码、数据集和模型。
+Since the benchmark will run in a Docker container, you need to first configure a directory on the host machine for sharing with the container. This is typically used to store code, datasets, and models.
 
-在你的 `run_setup_verl.sh` 脚本中，找到脚本中内容 `# Create 'verl' container
+In your `run_setup_verl.sh` script, find the following content:
+
+```bash
+# Create 'verl' container
 echo "--- Creating 'verl' container ---"
 sudo docker create --runtime=nvidia --gpus all --net=host --shm-size="10g" --cap-add=SYS_ADMIN \
   -v "$(pwd)":/workspace/verl_space \
-  --name verl verlai/verl:app-verl0.4-vllm0.8.5-mcore0.12.1-deepep sleep infinity` ，并修改 `$(pwd)` 为你想要设置的宿主机根目录的**绝对路径**。
+  --name verl verlai/verl:app-verl0.4-vllm0.8.5-mcore0.12.1-deepep sleep infinity
+```
 
-例如，如果你希望将 `/scratch/haoyu` 作为根目录，则修改为：
+Modify `$(pwd)` to the **absolute path** of your desired host machine root directory.
+
+For example, if you want to use `/scratch/haoyu` as the root directory, modify it to:
 
 ```bash
 -v /scratch/haoyu:/workspace/verl
 ```
-否则默认使用根路径（不推荐）
 
-### **步骤 2: 运行安装脚本**
+Otherwise, the default root path will be used (not recommended).
 
-执行 `setup_verl.sh` 脚本来自动完成环境的初始化。这个脚本将处理 Docker 的创建和配置。
+## Step 2: Run Installation Script
+
+Execute the `setup_verl.sh` script to automatically complete environment initialization. This script will handle Docker creation and configuration.
 
 ```bash
 bash setup_verl.sh
 ```
 
-### **步骤 3: 进入容器**
+## Step 3: Enter Container
 
-`setup_verl.sh` 脚本运行成功后，会创建一个名为 `verl` 的容器。通过以下命令进入容器的终端：
+After the `setup_verl.sh` script runs successfully, it will create a container named `verl`. Enter the container terminal with the following command:
 
 ```bash
 docker exec -it verl bash
 ```
 
-进入容器后，进入 `/workspace/verl` 目录下，这里是你的项目代码所在的位置。
+Once inside the container, navigate to the `/workspace/verl` directory, where your project code is located.
 
-### **步骤 4: 下载数据集**
+## Step 4: Download Dataset
 
-基准测试需要使用 GSM8K 数据集。在容器内部，运行以下命令来下载数据集：
+The benchmark requires the GSM8K dataset. Inside the container, run the following commands to download the dataset:
 
 ```bash
-# 进入数据预处理目录
+# Navigate to data preprocessing directory
 cd examples/data_preprocess
 
-# 下载 GSM8K 数据集
+# Download GSM8K dataset
 python3 gsm8k.py --local_dir ~/data/gsm8k
 ```
 
-### **步骤 5: 登录 Hugging Face 和 WandB**
+## Step 5: Login to Hugging Face and WandB
 
-为了下载模型（如 Llama）和记录实验结果，你需要登录 Hugging Face 和 Weights & Biases (WandB)。
+To download models (such as Llama) and record experimental results, you need to log in to Hugging Face and Weights & Biases (WandB).
 
 ```bash
-# 登录 Hugging Face
+# Login to Hugging Face
 huggingface-cli login
 
-# 登录 WandB
+# Login to WandB
 wandb login
 ```
 
-### **步骤 6: 运行基准测试脚本**
+## Step 6: Run Benchmark Script
 
-所有配置和数据集都准备好后，你就可以运行基准测试脚本了：
+Once all configurations and datasets are ready, you can run the benchmark script:
 
 ```bash
-# 假设你在项目根目录
+# Change script path accordingly
 bash run_llama3_1B_grpo.sh
 ```
 
-这个脚本将使用你配置好的环境来执行 Llama 3 1B 模型的 GRPO 训练。
+This script will use your configured environment to execute GRPO training on the Llama 3 1B model.
 
+## Troubleshooting: Handling Training Crashes
 
+If training crashes occur, the crashed tasks may become zombie processes that continue to occupy GPU resources. Run the following commands to restart and clean up resources:
 
+```bash
+# Exit container
+exit
 
-如果训练中出现训练崩溃，崩溃的任务可能变为僵尸进程，持续占用gpu资源，运行以下命令restart清理资源：
-exit 退出container
+# Restart Docker service
 sudo systemctl restart docker
+
+# Restart verl container
 docker restart verl
-docker exec -it verl bash #重新进入
-!
+
+# Re-enter container
+docker exec -it verl bash
+```
