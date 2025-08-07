@@ -70,11 +70,12 @@ echo "--- Entering 'verl' container for setup ---"
 docker exec -it verl bash -c "
   echo '--- Running setup commands inside container ---';
   cd verl_space;
-  git clone https://github.com/volcengine/verl /workspace/verl;
+  git clone https://github.com/volcengine/verl;
   cd verl;
   pip3 install --no-deps -e .;
-  echo '--- Setup finished. Type exit to leave container. ---';
+  echo '--- Setup finished. Exit to leave container. ---';
+  exit;
   bash
 "
 echo "Exited 'verl' container session."
-echo "--- Script execution completed ---"
+echo "--- Run this command to start a verl task: docker exec -it verl bash ---"
