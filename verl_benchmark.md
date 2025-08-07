@@ -1,3 +1,96 @@
+# veRL Benchmark Report: GRPO + LLaMA3.2-1B on GSM8K
+
+## Experimental Configuration
+
+| Item | Configuration |
+|------|---------------|
+| **Environment** | GPU H100 × 8 |
+| **Framework** | veRL |
+| **Algorithm** | GRPO (Group Relative Policy Optimization) |
+| **Model** | LLaMA3.2-1B |
+| **Task** | GSM8K |
+| **Training Steps** | 105 global steps |
+| **Training Time** | Approximately 2h10min |
+| **Wandb** | kkkk |
+
+---
+
+## Training Results Analysis
+
+### 1. Convergence Metrics
+
+| Metric | Value | Conclusion |
+|--------|-------|------------|
+| `actor/lr` | 0.0 | Learning rate decayed to 0, training ended |
+| `actor/pg_loss` | -0.00012 | Policy updates are minimal, indicates convergence |
+| `actor/pg_clipfrac` | 0.00083 | Almost no updates were clipped, stable policy |
+| `actor/entropy` | 0.05091 | Low entropy, policy is deterministic |
+| `actor/kl_loss` | 0.00329 | Very small KL divergence, minimal deviation from reference policy |
+
+**Conclusion**: Model has converged, policy is stable and learning has mostly stopped.
+
+### 2. Performance Metrics
+
+| Metric | Value | Conclusion |
+|--------|-------|------------|
+| `val-core/gsm8k/reward/mean@1` | 0.64291 | Good validation reward, training is effective |
+| `critic/rewards/mean` | 0.89863 | High average reward, quality generation |
+| `critic/advantages/mean` | -0.01817 | Advantage is near 0, close to reference policy |
+| `critic/returns/mean` | -0.01817 | Return is stable, no drastic change |
+
+**Conclusion**: Training significantly improved model performance.
+
+### 3. Efficiency Metrics
+
+| Metric | Value |
+|--------|-------|
+| `perf/mfu/actor` | 0.0654 |
+| `perf/throughput` | 2,092.46 tokens/s |
+| `perf/time_per_step` | 88.7s |
+| `timing_s/generate_sequences` | 18.6s |
+| `timing_s/update_actor` | 27.3s |
+
+### 4. Input/Output Length
+
+| Metric | Value |
+|--------|-------|
+| `prompt_length/mean` | 106.77 |
+| `response_length/mean` | 183.24 |
+| `response_length/clip_ratio` | 0.00293 |
+
+---
+
+## Metric Definitions
+
+### Convergence Metrics
+- **`actor/lr`**: Current learning rate of the policy model
+- **`actor/pg_loss`**: Policy gradient loss; near-zero means little update
+- **`actor/pg_clipfrac`**: Fraction of updates that were clipped
+- **`actor/entropy`**: Entropy of the policy distribution; low = deterministic output
+- **`actor/kl_loss`**: KL divergence from the reference policy
+
+### Performance Metrics
+- **`val-core/gsm8k/reward/mean@1`**: Average reward on the validation set
+- **`critic/rewards/mean`**: Average reward of generated samples
+- **`critic/advantages/mean`**: Mean advantage; positive = better than baseline
+- **`critic/returns/mean`**: Mean return (cumulative discounted reward)
+
+### Efficiency Metrics
+- **`perf/mfu/actor`**: GPU Memory-FLOP utilization
+- **`perf/throughput`**: Tokens processed per second
+- **`perf/time_per_step`**: Wall time per training step
+- **`timing_s/generate_sequences`**: Time spent generating model outputs
+- **`timing_s/update_actor`**: Time spent updating the actor model
+
+### Length Metrics
+- **`prompt_length/mean`**: Average prompt token length
+- **`response_length/mean`**: Average generated response length
+- **`response_length/clip_ratio`**: Fraction of responses that were truncated
+
+
+
+## Training result log
+
 ```
 Training Progress: 100%|██████████| 105/105 [2:10:46<00:00, 74.73s/it]
 (TaskRunner pid=67763) wandb:                                                                                
