@@ -59,7 +59,7 @@ for f in files:
 
 ---
 
-## ✅ Correct Solution: Lazy Load + Immediate Sharding
+## Correct Solution: Lazy Load + Immediate Sharding
 
 Use `safe_open(...).get_tensor(key)` to **load tensors one by one**, and use `jax.device_put` to immediately shard them to the appropriate device.
 
@@ -70,7 +70,7 @@ import jax.numpy as jnp
 
 with safe_open(f, framework="numpy") as sf:
     for k in sf.keys():
-        v = sf.get_tensor(k)  # ✅ Lazily load only one tensor
+        v = sf.get_tensor(k)  # Lazily load only one tensor
 
         # Optional: permute or reshape
         if transform is not None:
@@ -80,9 +80,9 @@ with safe_open(f, framework="numpy") as sf:
             if reshape:
                 v = v.reshape(reshape)
 
-        arr = jnp.array(v)  # ✅ Explicitly control when data enters device
+        arr = jnp.array(v)  # Explicitly control when data enters device
 
-        # ✅ Immediately place on correct shard (avoid TPU0 accumulation)
+        # Immediately place on correct shard (avoid TPU0 accumulation)
         if shard is not None:
             subdict[final_key] = jax.device_put(arr, shard[final_key])
         else:
