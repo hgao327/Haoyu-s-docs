@@ -11,7 +11,7 @@
 | **Task** | GSM8K |
 | **Training Steps** | 105 global steps |
 | **Training Time** | Approximately 2h25min |
-| **Wandb** | [6icl7pbz]() |
+| **Wandb** | [Wandb log-qwen2.5 7B](https://wandb.ai/haoyugao-google/verl_grpo_example_gsm8k/runs/6icl7pbz?nw=nwuserhaoyugao) |
 
 ---
 
