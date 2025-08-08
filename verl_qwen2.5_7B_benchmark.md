@@ -1,3 +1,91 @@
+# veRL Benchmark Report: GRPO + Qwen2.5-7B on GSM8K
+
+## Experimental Configuration
+
+| Item | Configuration |
+|------|---------------|
+| **Environment** | GPU H100 × 8 |
+| **Framework** | veRL |
+| **Algorithm** | GRPO (Group Relative Policy Optimization) |
+| **Model** | Qwen2.5-7B Function RM |
+| **Task** | GSM8K |
+| **Training Steps** | 105 global steps |
+| **Training Time** | Approximately 2h25min |
+| **Wandb** | [6icl7pbz]() |
+
+---
+
+## Training Results Analysis
+
+### 1. Convergence Metrics
+
+| Metric | Value | Conclusion |
+|--------|-------|------------|
+| `actor/lr` | 0.0 | Learning rate decayed to 0, training ended |
+| `actor/pg_loss` | -0.00265 | Policy updates are minimal, indicates convergence |
+| `actor/pg_clipfrac` | 0.00015 | Almost no updates were clipped, stable policy |
+| `actor/entropy` | 0.06955 | Low entropy, policy is deterministic |
+| `actor/kl_loss` | 0.01276 | Small KL divergence, minimal deviation from reference policy |
+
+**Conclusion**: Model has converged, policy is stable and learning has mostly stopped.
+
+### 2. Performance Metrics
+
+| Metric | Value | Conclusion |
+|--------|-------|------------|
+| `val-core/openai/gsm8k/reward/mean@1` | 0.92722 | |
+| `critic/rewards/mean` | 0.9793 | exceptional generation quality |
+| `critic/advantages/mean` | -0.00064 | Advantage is near 0, close to reference policy |
+| `critic/returns/mean` | -0.00064 | Return is stable, no drastic change |
+
+**Conclusion**: Training achieved outstanding model performance with 92.7% validation accuracy.
+
+### 3. Efficiency Metrics
+
+| Metric | Value |
+|--------|-------|
+| `perf/mfu/actor` | 0.34695 |
+| `perf/throughput` | 1,811.23 tokens/s |
+| `perf/time_per_step` | 114.85s |
+| `timing_s/generate_sequences` | 26.73s |
+| `timing_s/update_actor` | 29.14s |
+
+### 4. Input/Output Length
+
+| Metric | Value |
+|--------|-------|
+| `prompt_length/mean` | 92.98 |
+| `response_length/mean` | 232.04 |
+| `response_length/clip_ratio` | 0.0002 |
+
+---
+
+## Metric Definitions
+
+### Convergence Metrics
+- **`actor/lr`**: Current learning rate of the policy model
+- **`actor/pg_loss`**: Policy gradient loss; near-zero means little update
+- **`actor/pg_clipfrac`**: Fraction of updates that were clipped
+- **`actor/entropy`**: Entropy of the policy distribution; low = deterministic output
+- **`actor/kl_loss`**: KL divergence from the reference policy
+
+### Performance Metrics
+- **`val-core/openai/gsm8k/reward/mean@1`**: Average reward on the validation set
+- **`critic/rewards/mean`**: Average reward of generated samples
+- **`critic/advantages/mean`**: Mean advantage; positive = better than baseline
+- **`critic/returns/mean`**: Mean return (cumulative discounted reward)
+
+### Efficiency Metrics
+- **`perf/mfu/actor`**: GPU Memory-FLOP utilization
+- **`perf/throughput`**: Tokens processed per second
+- **`perf/time_per_step`**: Wall time per training step
+- **`timing_s/generate_sequences`**: Time spent generating model outputs
+- **`timing_s/update_actor`**: Time spent updating the actor model
+
+### Length Metrics
+- **`prompt_length/mean`**: Average prompt token length
+- **`response_length/mean`**: Average generated response length
+- **`response_length/clip_ratio`**: Fraction of responses that were truncated
 ```("Final validation metrics: {'val-core/openai/gsm8k/reward/mean@1': "
 (TaskRunner pid=132393)  '0.9272175890826384}')
 Training Progress: 100%|██████████| 105/105 [2:25:28<00:00, 83.13s/it]
@@ -129,11 +217,4 @@ Training Progress: 100%|██████████| 105/105 [2:25:28<00:00, 
 (TaskRunner pid=132393) wandb:               timing_s/update_actor 29.13985
 (TaskRunner pid=132393) wandb:                      training/epoch 14
 (TaskRunner pid=132393) wandb:                training/global_step 105
-(TaskRunner pid=132393) wandb: val-core/openai/gsm8k/reward/mean@1 0.92722
-(TaskRunner pid=132393) wandb: 
-(TaskRunner pid=132393) wandb: 🚀 View run qwen2.5_7b_function_rm at: https://wandb.ai/haoyugao-google/verl_grpo_example_gsm8k/runs/6icl7pbz
-(TaskRunner pid=132393) wandb: ⭐️ View project at: https://wandb.ai/haoyugao-google/verl_grpo_example_gsm8k
-(TaskRunner pid=132393) wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
-(TaskRunner pid=132393) wandb: Find logs at: ./wandb/run-20250808_032152-6icl7pbz/logs```
-(WorkerDict pid=143990) INFO:2025-08-08 05:47:43,621:[Rank 0] Saved optim to /workspace/verl_space/verl/examples/grpo_trainer/checkpoints/verl_grpo_example_gsm8k/qwen2.5_7b_function_rm/global_step_105/actor/optim_world_size_8_rank_0.pt [repeated 7x across cluster]
-(WorkerDict pid=143990) INFO:2025-08-08 05:47:43,623:[Rank 0] Saved extra_state to /workspace/verl_space/verl/examples/grpo_trainer/checkpoints/verl_grpo_example_gsm8k/qwen2.5_7b_function_rm/global_step_105/actor/extra_state_world_size_8_rank_0.pt [repeated 7x across cluster]
+(TaskRunner pid=132393) wandb: val-core/openai/gsm8k/reward/mean@1 0.92722 /workspace/verl_space/verl/examples/grpo_trainer/checkpoints/verl_grpo_example_gsm8k/qwen2.5_7b_function_rm/global_step_105/actor/extra_state_world_size_8_rank_0.pt [repeated 7x across cluster]
