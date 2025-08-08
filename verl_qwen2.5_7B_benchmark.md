@@ -1,4 +1,4 @@
- ("Final validation metrics: {'val-core/openai/gsm8k/reward/mean@1': "
+```("Final validation metrics: {'val-core/openai/gsm8k/reward/mean@1': "
 (TaskRunner pid=132393)  '0.9272175890826384}')
 Training Progress: 100%|██████████| 105/105 [2:25:28<00:00, 83.13s/it]
 (TaskRunner pid=132393) wandb:                                                                                
@@ -134,6 +134,6 @@ Training Progress: 100%|██████████| 105/105 [2:25:28<00:00, 
 (TaskRunner pid=132393) wandb: 🚀 View run qwen2.5_7b_function_rm at: https://wandb.ai/haoyugao-google/verl_grpo_example_gsm8k/runs/6icl7pbz
 (TaskRunner pid=132393) wandb: ⭐️ View project at: https://wandb.ai/haoyugao-google/verl_grpo_example_gsm8k
 (TaskRunner pid=132393) wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
-(TaskRunner pid=132393) wandb: Find logs at: ./wandb/run-20250808_032152-6icl7pbz/logs
+(TaskRunner pid=132393) wandb: Find logs at: ./wandb/run-20250808_032152-6icl7pbz/logs```
 (WorkerDict pid=143990) INFO:2025-08-08 05:47:43,621:[Rank 0] Saved optim to /workspace/verl_space/verl/examples/grpo_trainer/checkpoints/verl_grpo_example_gsm8k/qwen2.5_7b_function_rm/global_step_105/actor/optim_world_size_8_rank_0.pt [repeated 7x across cluster]
 (WorkerDict pid=143990) INFO:2025-08-08 05:47:43,623:[Rank 0] Saved extra_state to /workspace/verl_space/verl/examples/grpo_trainer/checkpoints/verl_grpo_example_gsm8k/qwen2.5_7b_function_rm/global_step_105/actor/extra_state_world_size_8_rank_0.pt [repeated 7x across cluster]
