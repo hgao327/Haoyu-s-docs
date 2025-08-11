@@ -266,3 +266,354 @@ if finish_reason == STOP or LENGTH or TOOL_CALL then break
 
 # _req.finalize(...)，change state, release tool
 ```
+
+
+
+
+
+# Tunix Multi-turn Architecture Design v1
+
+## 0. Design Philosophy
+
+For multi-turn/agentic RL, it can be divided into frontend and backend
+
+- Frontend: trajectory collect
+- Backend: train
+
+```python
+for task in tasks:                        # Each task
+    agent = ToolAgent()                  # Create Agent
+    env = ToolEnv(task)                  # Create Env
+    trajectory = run_rollout(agent, env)  # Interaction sampling
+    trajectories.append(trajectory)
+
+learner.train(trajectories)             # Train with this data
+```
+
+In **post-training / reinforcement learning fine-tuning**, there are two common approaches
+
+| Mode        | Trajectory Generation                                        | When to Start Training                                       | Pros and Cons                                                |
+| ----------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| **Offline** | First use "old model" or human annotation to **generate/collect** large amounts of trajectories at once, written as fixed dataset | Start Learner after trajectories are collected, no environment interaction during training | • But model can only learn from **old policy distribution** experience, limited improvement |
+| **Online**  | Frontend **continuously** dialogues with environment, sending new trajectories to Replay Buffer constantly | Learner updates parameters while receiving new data; pushes new weights to frontend every N steps | • Training and sampling proceed simultaneously, model can gradually "bootstrap" to stronger policy |
+
+We adopt the second approach, **online loop**:
+
+```text
+      (collect)                            (train)
+Actor ──► Trajectory ──► Buffer ──► Learner ─► New params ─► Actor … (loop)
+```
+
+- **Actor/Frontend** is always interacting with the environment—batch by batch "appending" new trajectories.
+- **Learner/Backend** performs gradient update each time it gets a small batch of latest data, instead of waiting for all to be collected.
+
+## 1. Overall Architecture
+
+```
+tunix/rl/multi_turn/
+├── agents/                      # 1. Agent layer
+├── environments/                # 2. Environment layer  
+├── parser/tool_parser/          # 3. Tool parsing layer
+├── tools/                       # 4. Tool execution layer
+├── rewards/                     # 5. Reward system
+├── TrajectoryCollector/         # 6. Trajectory collection layer
+└── prompts/                     # 7. Prompt management layer
+```
+
+## 2. Core Data Structures
+
+### 2.1 Basic Data Types
+
+```python
+@dataclass
+class Step:
+    chat_completions: list[dict[str, str]]  # OpenAI format messages
+    thought: str                            # Reasoning process
+    action: Any                            # Structured action
+    observation: Any                       # Environment observation
+    model_response: str                    # LLM raw response
+    reward: float                          # Immediate reward
+    done: bool                            # Termination flag
+    mc_return: float                      # Monte Carlo return
+
+@dataclass 
+class Trajectory:
+    task: Any                             # Task description
+    steps: list[Step]                     # Step sequence
+    reward: float                         # Total reward
+
+@dataclass
+class ToolCall:
+    name: str                             # Tool name
+    arguments: dict[str, Any]             # Call parameters
+
+@dataclass  
+class ToolOutput:
+    name: str                             # Tool name
+    output: str | list | dict             # Execution result
+    error: str                            # Error message
+    metadata: dict                        # Metadata
+```
+
+## 3. Module Architecture Design
+
+### 3.1 Agent Layer (agents)
+
+#### 3.1.1 BaseAgent Abstract Interface
+
+```python
+class BaseAgent(ABC):
+    # Property interface
+    @property
+    def chat_completions(self) -> list[dict[str, str]]  # LLM input messages
+    @property 
+    def trajectory(self) -> Trajectory                   # Trajectory object
+    
+    # Core methods
+    @abstractmethod
+    def update_from_env(observation, reward, done, info)  # Environment feedback processing
+    @abstractmethod
+    def update_from_model(response: str) -> Action        # Model output parsing
+    @abstractmethod
+    def reset()                                          # State reset
+```
+
+#### 3.1.2 ToolAgent Tool Calling Implementation
+
+```python
+class ToolAgent(BaseAgent):
+    def __init__(self, system_prompt, parser_name, tool_map):
+        self.tool_manager = ToolManager(tool_map)         # Tool routing
+        self.tool_parser = get_tool_parser(parser_name)   # Parser
+        self._messages = []                               # Dialogue history
+        self._trajectory = Trajectory()                   # Trajectory recording
+```
+
+### 3.2 Environment Layer (environments)
+
+#### 3.2.1 BaseEnv Abstract Interface
+
+```python
+class BaseEnv(ABC):
+    @abstractmethod
+    def reset() -> tuple[dict, dict]                    # Reset environment
+    @abstractmethod 
+    def step(action) -> tuple[Any, float, bool, dict]   # Execute action
+    @staticmethod
+    @abstractmethod
+    def from_dict(env_args: dict) -> "BaseEnv"          # Configuration creation
+```
+
+#### 3.2.2 ToolEnvironment Tool Execution Environment
+
+```python
+class ToolEnvironment(BaseEnv):
+    def __init__(self, task, tool_map, reward_fn, max_steps=10):
+        self.tool_manager = ToolManager(tool_map)       # Tool manager
+        self.reward_fn = reward_fn                      # Reward function
+        self.step_count = 0                            # Step counter
+```
+
+### 3.3 Tool Parsing Layer (parser/tool_parser)
+
+#### 3.3.1 ToolParser Abstract Interface
+
+```python
+class ToolParser(ABC):
+    @abstractmethod
+    def parse(model_response: str) -> list[ToolCall]     # Parse tool calls
+    @abstractmethod  
+    def get_tool_prompt(tools_schema: str) -> str        # Generate tool prompt
+    def parse_tool_outputs(model_response: str) -> dict  # Parse tool outputs (optional)
+```
+
+#### 3.3.2 Parser Registration Mechanism
+
+```python
+_PARSER_REGISTRY = {
+    "qwen": QwenToolParser,
+    # "openai": OpenAIFunctionToolParser,
+}
+
+def get_tool_parser(parser_name: str) -> type[ToolParser]:
+    # Dynamically get parser class
+```
+
+### 3.4 Tool Execution Layer (tools)
+
+#### 3.4.1 BaseTool Abstract Interface
+
+```python
+class BaseTool(ABC):
+    def __init__(self, name: str, description: str):
+        # Tool basic information
+    
+    @property
+    @abstractmethod
+    def json(self) -> dict       # OpenAI compatible tool schema
+    
+    def forward(self, **kwargs) -> ToolOutput           # Synchronous execution
+    async def async_forward(self, **kwargs) -> ToolOutput  # Asynchronous execution
+```
+
+#### 3.4.2 ToolManager Tool Manager
+
+```python
+class ToolManager:
+    def __init__(self, tool_map: Dict[str, Type[BaseTool]]):
+        # Tool class instantiation and registration
+    
+    @property
+    def json(self) -> List[dict]  # Schema list of all tools
+    
+    def run(self, tool_name: str, **kwargs) -> ToolOutput
+    def execute_calls(self, calls: List[ToolCall], parallel=True) -> Dict[str, str]
+```
+
+### 3.5 Reward System (rewards)
+
+#### 3.5.1 Reward Data Structure
+
+```python
+@dataclass
+class RewardOutput:
+    reward: float                    # Scalar reward value
+    metadata: Dict[str, Any]         # Debug info and detailed metrics
+```
+
+#### 3.5.2 Reward Function Registration Mechanism
+
+```python
+_REGISTRY: Dict[str, Callable] = {}
+
+@register("reward_name")
+def reward_function(task: Dict, action: str) -> RewardOutput:
+    # Reward calculation logic
+```
+
+### 3.6 Trajectory Collection Engine (execution)
+
+#### 3.6.1 TrajectoryCollectEngine Core Class
+
+```python
+class TrajectoryCollectEngine:
+    def __init__(self, agent, env, model_call, final_reward_fn, 
+                 max_steps=10, gamma=1.0, timeout=30.0):
+        # Component dependency injection
+        
+    async def collect(self) -> Trajectory:
+        # Complete rollout execution flow
+```
+
+## 5. Complete System Execution Flow
+
+### 5.1 System Startup and Initialization
+
+```
+1. Component Creation Phase
+   ├── ToolAgent(system_prompt, parser_name, tool_map)
+   │   ├── ToolManager instantiation → Tool class registration
+   │   ├── ToolParser acquisition → Parser loading  
+   │   └── System prompt building → Tool schema injection
+   │
+   ├── ToolEnvironment(task, tool_map, reward_fn, max_steps)
+   │   ├── Task configuration loading
+   │   ├── Tool mapping setup
+   │   └── Reward function binding
+   │
+   └── TrajectoryCollectEngine(agent, env, model_call, final_reward_fn)
+       └── Dependency injection completed
+
+2. System Ready State
+   └── All components initialized, waiting to execute collect()
+```
+
+### 5.2 Single Episode Complete Execution Flow
+
+```
+engine.collect() call
+    ↓
+5.2.1 Reset Phase (_reset)
+    ├── env.reset() → Return initial task observation
+    ├── agent.reset() → Clear trajectory and message history
+    ├── agent.update_from_env(obs) → Load task into message list
+    └── Start timing
+
+    ↓
+5.2.2 Loop Interaction Phase (_one_step * max_steps)
+    ├── LLM Inference Subprocess
+    │   ├── agent.chat_completions → Get message list
+    │   ├── model_call(messages) → Async LLM call
+    │   └── Return response text
+    │
+    ├── Response Parsing Subprocess  
+    │   ├── agent.update_from_model(response)
+    │   ├── ├── tool_parser.parse(response) → ToolCall list
+    │   ├── ├── Construct Action object
+    │   ├── ├── Record Step to trajectory
+    │   ├── └── Return Action
+    │   └── Pass Action to environment
+    │
+    ├── Environment Execution Subprocess
+    │   ├── env.step(action)
+    │   ├── ├── Check termination conditions (finish function/max_steps)
+    │   ├── ├── If terminate → Calculate reward and return
+    │   ├── ├── If continue → tool_manager.execute_calls()
+    │   ├── └── Return (obs, reward, done, info)
+    │   └── agent.update_from_env() → Update trajectory and messages
+    │
+    ├── Timeout Check
+    │   └── If timeout → Mark done=True
+    │
+    └── If done=True → Break loop
+
+    ↓
+5.2.3 Cleanup Phase
+    ├── _append_final_reward() → Add final reward
+    ├── _fill_returns() → Calculate Monte Carlo returns
+    ├── _close() → Resource cleanup
+    └── Return complete Trajectory object
+```
+
+### 5.3 Tool Call Detailed Execution Flow
+
+```
+ToolManager.execute_calls(calls, parallel=True)
+    ↓
+5.3.1 Tool Call Preprocessing
+    ├── Iterate through ToolCall list
+    ├── Assign unique call_id for each call
+    └── Prepare thread execution queue
+
+    ↓
+5.3.2 Parallel Execution Phase
+    ├── Each ToolCall starts independent thread
+    ├── ├── tool_manager.run(tool_name, **arguments)
+    ├── ├── ├── Tool instance acquisition
+    ├── ├── ├── tool.forward(**kwargs) → ToolOutput
+    ├── ├── └── Exception catching → Error wrapping
+    ├── └── Write result to queue (call_id, output_string)
+
+    ↓
+5.3.3 Result Aggregation
+    ├── Wait for all threads to complete
+    ├── Collect all results from queue
+    └── Return {call_id: output_string} dictionary
+```
+
+### 5.4 Message Format Conversion Flow
+
+```
+5.4.1 Environment Observation → Chat Message Conversion
+    ├── Task observation: {"question": "1+1=?"} 
+    │   → {"role": "user", "content": "1+1=?"}
+    │
+    └── Tool output: {"tool_outputs": {call_id: result}}
+        → {"role": "user", "tool_call_id": call_id, "content": "Tool returned result: ..."}
+
+5.4.2 Chat Message History Maintenance
+    ├── System message: system_prompt + tools_prompt
+    ├── User message: task question + tool return results
+    ├── Assistant message: LLM generated response
+    └── Complete dialogue context preservation
+```
