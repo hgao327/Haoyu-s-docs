@@ -617,3 +617,123 @@ ToolManager.execute_calls(calls, parallel=True)
     ├── Assistant message: LLM generated response
     └── Complete dialogue context preservation
 ```
+
+
+
+可以的！你有两种主流做法，推荐第 1 种（最稳）：在 **宿主机路径和容器做绑定挂载**，然后用 VS Code 远程到 TPU VM，直接改宿主机代码；容器里立刻生效，notebook 里 `%autoreload 2` 实时同步。
+
+---
+
+# 方案一（推荐）：绑定挂载 + VS Code Remote-SSH
+
+**思路**：把 `tunix` 代码目录挂到容器里，VS Code 通过 SSH 登到 TPU VM，改宿主机上的代码即可。
+
+1. 先停掉当前的 colab 容器（如果在跑）
+
+```bash
+docker stop colab || true
+```
+
+2. 用绑定挂载重启容器（把路径换成你的实际项目路径）
+
+```bash
+PROJECT=/home/youruser/tunix  # ← 你的 tunix 项目目录
+docker run --rm --privileged --net=host \
+  -v /dev:/dev -v /run:/run -v /var/lib/cloud:/var/lib/cloud \
+  -v $PROJECT:/workspace/tunix \
+  -e TPU_NAME="local" --name colab \
+  -w /workspace \
+  us-docker.pkg.dev/colab-images/public/runtime
+```
+
+> 说明：
+>
+> * `-v $PROJECT:/workspace/tunix` 把宿主机代码挂进去；
+> * `-w /workspace` 把工作目录设到容器里；
+> * 你原命令里如果用 `-p 127.0.0.1:9000:8080` 也可以保留；`--net=host` 则不需要再 `-p`。
+
+3. VS Code 这边
+
+* 安装 **Remote-SSH** 扩展。
+* 用 SSH 连接到 TPU VM（Command Palette → *Remote-SSH: Connect to Host*）。
+* 在远程 VS Code 里打开 **宿主机** 的项目目录（比如 `/home/youruser/tunix`）。
+* 在 notebook 里加：
+
+  ```python
+  %load_ext autoreload
+  %autoreload 2
+  ```
+
+  之后你在 VS Code 改代码，notebook 里重跑 cell 就能看到变化。
+
+> 权限小贴士：如遇到容器里创建的文件变成 root 权限，可用
+>
+> ```
+> --user $(id -u):$(id -g)
+> ```
+>
+> 追加到 `docker run`，避免 root 写入。
+
+---
+
+# 方案二：直接“附着”进正在运行的容器编辑
+
+**思路**：VS Code 先 Remote-SSH 到 TPU VM，然后 **Attach 到容器**，在容器视角直接改 `/workspace/tunix`。
+
+1. Remote-SSH 连接到 TPU VM（同上）。
+2. 在远程 VS Code 装 **Dev Containers** 或 **Docker** 扩展。
+3. Command Palette → **Dev Containers: Attach to Running Container…** → 选 `colab`。
+4. 打开容器里的 `/workspace/tunix` 目录编辑。
+
+> 这招也能用，但如果没做绑定挂载，你的改动只在容器里；容器重启就没了。建议配合上面的 `-v $PROJECT:/workspace/tunix`。
+
+---
+
+## 常见问题排查
+
+* **notebook 改了代码不生效**：确认用了 `%autoreload 2`，或重启 kernel。
+* **找不到模块**：在容器里执行一次
+
+  ```bash
+  pip install -e /workspace/tunix
+  ```
+* **你到底改的是容器还是宿主机？** 在 notebook 里打印：
+
+  ```python
+  import sys, os
+  print(sys.executable)
+  print(os.getcwd())
+  ```
+
+  并在 SSH 里 `ls /workspace/tunix` 看看是否和宿主机同步。
+
+需要我根据你当前的 `docker run` 原始命令，给你改成“带挂载 + 端口映射”的最终版本吗？你把原命令贴一下我帮你改好。
+
+
+`-w` 只是设置 **容器的工作目录**（working directory），
+并不限制容器只能看到 `tunix` 这个目录。
+
+我在例子里写 `-w /workspace/tunix` 是因为假设你的项目叫 `tunix`，而且我们把它挂载到容器的 `/workspace/tunix` 目录里，这样容器启动的时候直接落到项目根目录，方便你在 notebook 里 `pip install -e .` 或运行代码。
+
+如果你想启动后落在上一级，比如 `/workspace`，完全可以改成：
+
+```bash
+-w /workspace
+```
+
+这样进入容器默认就在 `/workspace`，然后里面能看到 `tunix` 子目录。
+
+---
+
+**区别总结：**
+
+| 配置                    | 效果                        |
+| --------------------- | ------------------------- |
+| `-w /workspace/tunix` | 容器启动直接进入 `tunix` 项目目录     |
+| `-w /workspace`       | 启动进入上一级目录，需要手动 `cd tunix` |
+| 不加 `-w`               | 进入容器的默认目录（取决于镜像设定）        |
+
+---
+
+如果你希望 VS Code 进入容器就能直接打开项目，并且 notebook 默认路径也是项目根目录，建议 `-w` 指向 **项目根**。
+我可以帮你基于你截图里的 docker run 命令，改成 **带挂载 + 正确工作目录** 的版本，你要我直接改吗？这样你直接复制就能跑。
