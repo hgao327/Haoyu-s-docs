@@ -485,7 +485,7 @@ gradient_accumulation_steps = 4  # 32 / 8 = 4
 effective_batch_size = microbatch_size × gradient_accumulation_steps  # = 32
 ```
 
-This way you can get large batch training stability and effect with limited memory.
+This way we can get large batch training stability and effect with limited memory.
 
 Solution 1: Maintain current approach, add batch accumulation operations at logps calculation location
 
