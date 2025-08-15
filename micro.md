@@ -1,191 +1,288 @@
-好的，我给你一套**最小侵入**、可逐步演进的 micro-batch 设计，专门覆盖你现在两条“打分前向”路径：
-
-* rollout：`rollout.get_per_token_logps(...)`
-* ref：`inference_worker.get_ref_per_token_logps(...)` → `common.compute_per_token_logps(...)`
-
-思路是**在调用入口外层切 batch**，不改 `common.compute_per_token_logps`，这样风险小、回滚容易。
-
 ---
 
-# 目标
-
-* 在不改 `common.*` 的前提下，为 **rollout/ref 打分**增加 **推理 micro-batch**。
-* 支持不满尾块；尽量**避免反复编译**（动态 batch 导致 JIT 抖动）。
-* 不影响现有 **actor 训练端的梯度累积**（MultiSteps）。
-
----
-
-# 配置项（建议）
-
-在 `ClusterConfig` 或其子配置里加两个字段（按你喜欢的地方存放即可）：
+# 1) 工具函数：LCM 与切片
 
 ```python
-# for reference打分
-ref_logprob_mbs_per_gpu: int = 16
+# 放到文件顶部 imports 附近
+import math
 
-# for rollout打分（old）
-rollout_logprob_mbs_per_gpu: int = 32
+def _lcm3(a: int, b: int, c: int) -> int:
+  return (a * b) // math.gcd(a, b) * c // math.gcd(((a * b) // math.gcd(a, b)), c)
+
+def _chunk_slices_by_size(n: int, micro: int):
+  """按样本数 micro 返回 [slice(...), ...] 切片列表。最后一块允许 < micro。"""
+  i = 0
+  out = []
+  while i < n:
+    out.append(slice(i, min(i + micro, n)))
+    i += micro
+  return out
 ```
 
-> 你也可以放在更细粒度的 config（例如 `actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu`），只要能在 RLCluster/InferenceWorker/rollout 入口读到就行。
+---
+
+# 2) 分阶段分块：rollout / ref / old
+
+```python
+# 放在 GrpoLearner 类里（与之前给你的 _rollout_in_chunks / _per_token_logps_in_chunks 类似）
+def _rollout_by_micro(self, prompts: list[str], micro: int):
+  outs_tokens = []
+  outs_text = []
+  outs_left_padded = []
+  for slc in _chunk_slices_by_size(len(prompts), micro):
+    sub_prompts = prompts[slc]
+    out = self.rl_cluster.generate(prompts=sub_prompts)
+    outs_tokens.append(out.tokens)                         # [b, T_out]
+    outs_text.extend(out.text)
+    outs_left_padded.append(out.left_padded_prompt_tokens) # [b, T_in]
+  completion_ids = jnp.concatenate(outs_tokens, axis=0)
+  left_padded = jnp.concatenate(outs_left_padded, axis=0)
+  return completion_ids, left_padded, outs_text
+
+def _ref_logps_by_micro(self, prompt_ids: jnp.ndarray, completion_ids: jnp.ndarray, micro: int):
+  pad_id = self.rl_cluster.rollout.pad_id()
+  eos_id = self.rl_cluster.rollout.eos_id()
+  outs = []
+  B = prompt_ids.shape[0]
+  for slc in _chunk_slices_by_size(B, micro):
+    outs.append(self.rl_cluster.get_ref_per_token_logps(
+        prompt_tokens=prompt_ids[slc],
+        completion_tokens=completion_ids[slc],
+        pad_id=pad_id, eos_id=eos_id
+    ))
+  return jnp.concatenate(outs, axis=0)
+
+def _old_logps_by_micro(self, prompt_ids: jnp.ndarray, completion_ids: jnp.ndarray, micro: int):
+  outs = []
+  B = prompt_ids.shape[0]
+  for slc in _chunk_slices_by_size(B, micro):
+    outs.append(self.rl_cluster.get_old_per_token_logps(
+        prompt_tokens=prompt_ids[slc],
+        completion_tokens=completion_ids[slc]
+    ))
+  return jnp.concatenate(outs, axis=0)
+```
+
+> 以上三个方法都按“**样本数 micro**”切分；不涉及 token 预算或对齐。
 
 ---
 
-# 方案 A：最小改动（Python 循环切块）
+# 3) 改 `_generate_and_compute_advantage`：内部按各自 micro 分块执行
 
-### 1) 给 `InferenceWorker` 加一个带切批的包装
-
-```python
-# inference_worker.py
-def _batched_compute_per_token_logps(self, model, prompts, completions, pad_id, eos_id, mbs: int):
-    B = prompts.shape[0]
-    outs = []
-    for start in range(0, B, mbs):
-        end = min(start + mbs, B)
-        logps = common.compute_per_token_logps(
-            model,
-            prompt_tokens=prompts[start:end],
-            completion_tokens=completions[start:end],
-            pad_id=pad_id,
-            eos_id=eos_id,
-        )
-        outs.append(logps)
-    return jnp.concatenate(outs, axis=0)
-
-def get_ref_per_token_logps(self, prompt_tokens, completion_tokens, pad_id, eos_id, mbs: int | None = None):
-    ref_model = self._models.get("reference")
-    if ref_model is None:
-        raise ValueError("Reference model is not available.")
-    if not mbs:  # 兼容旧调用
-        return common.compute_per_token_logps(ref_model, prompt_tokens, completion_tokens, pad_id, eos_id)
-    return self._batched_compute_per_token_logps(ref_model, prompt_tokens, completion_tokens, pad_id, eos_id, mbs)
-```
-
-### 2) 在 `RLCluster.get_ref_per_token_logps` 里把 mbs 传进去
+把你原先“一把梭”的 generate / ref\_logps / old\_logps 换成“按 micro 分块”：
 
 ```python
-def get_ref_per_token_logps(...):
-  with self.cluster_config.role_to_mesh[Role.REFERENCE]:
-    self._maybe_load_model_from_cpu(self.inference_worker.get_model("reference"), Role.REFERENCE)
-    mbs = getattr(self.cluster_config, "ref_logprob_mbs_per_gpu", None)
-    ref_per_token_logps = self.inference_worker.get_ref_per_token_logps(
-        prompt_tokens, completion_tokens, pad_id, eos_id, mbs=mbs
+def _generate_and_compute_advantage(
+    self,
+    training_input: _TrainingInputT,
+    mode: metrics_logger.Mode = metrics_logger.Mode.TRAIN,
+) -> TrainExample:
+  pad_value = self.rl_cluster.rollout.pad_id()
+  eos_value = self.rl_cluster.rollout.eos_id()
+
+  prompts: List[str] = training_input["prompts"]
+
+  # === 1) rollout：按 rollout_micro 分块 ===
+  completion_ids, prompt_ids, completion_text = self._rollout_by_micro(
+      prompts, self.batch_config.rollout_micro_batch_size
+  )
+
+  # === 2) 组 mask ===
+  prompt_mask = (prompt_ids != pad_value).astype("int32")
+  completion_padding_mask = jnp.not_equal(completion_ids, pad_value).astype("int32")
+  completion_mask = common.make_completion_mask(completion_ids, eos_tok=eos_value)
+  completion_mask = completion_mask * completion_padding_mask
+
+  # === 3) ref / old logps：按各自 micro 分块 ===
+  if self.grpo_config.beta != 0.0:
+    ref_per_token_logps = self._ref_logps_by_micro(
+        prompt_ids, completion_ids, self.batch_config.ref_logps_micro_batch_size
     )
-    self._maybe_offload_model_to_cpu(self.inference_worker.get_model("reference"), Role.REFERENCE)
-    return ref_per_token_logps
+  else:
+    ref_per_token_logps = None
+
+  if self.grpo_config.num_iterations > 1:
+    old_per_token_logps = self._old_logps_by_micro(
+        prompt_ids, completion_ids, self.batch_config.old_logps_micro_batch_size
+    )
+  else:
+    old_per_token_logps = None
+
+  # === 4) reward 与 advantage（与原逻辑一致）===
+  rewards = self._compute_rewards(
+      prompts=prompts,
+      completions=completion_text,
+      mode=mode,
+      **{k: v for k, v in training_input.items() if k != "prompts"},
+  )
+  advantages = grpo_helpers.compute_advantages(
+      rewards, self.grpo_config.num_generations
+  )
+
+  # === 5) 记录长度指标（原样）===
+  agg_completion_mask = completion_mask.sum(axis=-1)
+  steps = self._get_metric_logging_steps(mode)
+  self._metrics_logger.log("completions/mean_length", agg_completion_mask.mean(), mode, steps)
+  self._metrics_logger.log("completions/max_length", agg_completion_mask.max(), mode, steps)
+  self._metrics_logger.log("completions/min_length", agg_completion_mask.min(), mode, steps)
+
+  # === 6) 返回 TrainExample ===
+  return TrainExample(
+      prompt_ids=prompt_ids,
+      prompt_mask=prompt_mask,
+      completion_ids=completion_ids,
+      completion_mask=completion_mask,
+      ref_per_token_logps=ref_per_token_logps,
+      advantages=advantages,
+      old_per_token_logps=old_per_token_logps,
+  )
 ```
-
-### 3) 给 rollout 的 `get_per_token_logps` 也包一层
-
-```python
-# rollout/base_rollout.py or vanilla_rollout.py 里
-def get_per_token_logps(self, prompt_tokens, completion_tokens, mbs: int | None = None):
-    model = self.model()
-    if not mbs:
-        return common.compute_per_token_logps(
-            model, prompt_tokens, completion_tokens, pad_id=self.pad_id(), eos_id=self.eos_id()
-        )
-
-    B = prompt_tokens.shape[0]
-    outs = []
-    for start in range(0, B, mbs):
-        end = min(start + mbs, B)
-        outs.append(common.compute_per_token_logps(
-            model,
-            prompt_tokens=prompt_tokens[start:end],
-            completion_tokens=completion_tokens[start:end],
-            pad_id=self.pad_id(),
-            eos_id=self.eos_id(),
-        ))
-    return jnp.concatenate(outs, axis=0)
-```
-
-并在 `RLCluster.get_old_per_token_logps` 里传值：
-
-```python
-def get_old_per_token_logps(...):
-  with self.cluster_config.role_to_mesh[Role.ROLLOUT]:
-    model = self.rollout.model()
-    self._maybe_load_model_from_cpu(model, Role.ROLLOUT)
-    if self.cluster_config.offload_to_cpu:
-      self.rollout.update_params(nnx.state(model))
-    mbs = getattr(self.cluster_config, "rollout_logprob_mbs_per_gpu", None)
-    per_token_logps = self.rollout.get_per_token_logps(prompt_tokens, completion_tokens, mbs=mbs)
-    ...
-    return per_token_logps
-```
-
-**优点**：实现量小、直观好测。
-**缺点**：不同大小的 batch 会触发多次编译（一般问题不大）。
 
 ---
 
-# 方案 B：稳定编译（固定块大小 + `lax.scan`）
+# 4) 改 `_prepare_data`：聚合大小=LCM(rollout, ref, old)
 
-为减少 JIT 抖动，可以把 batch **pad 到 mbs 的整数倍**，再 reshape 成 `[num_chunks, mbs, ...]`，用 `lax.scan`（或 `vmap`）一次编译。思路如下：
+核心变化：把原先的 `service_target_bs` 改成 LCM；达到 LCM（或数据尾部）就 flush。其余保持你已有语义（G 倍 repeat、μ 次 RepeatIterable、async/sync 两种入队方式）。
 
 ```python
-def _scan_compute_per_token_logps(self, model, prompts, completions, pad_id, eos_id, mbs: int):
-    B = prompts.shape[0]
-    # 1) pad 到上取整的 chunks * mbs
-    chunks = (B + mbs - 1) // mbs
-    pad_n = chunks * mbs - B
-    if pad_n > 0:
-        prompts_pad = common.pad_to_length(prompts, B + pad_n, pad_value=self._pad_id, left=False, axis=0)
-        completions_pad = common.pad_to_length(completions, B + pad_n, pad_value=self._pad_id, left=False, axis=0)
+def _prepare_data(
+    self,
+    iterator: Iterator[_TrainingInputT],
+    proceed_num_steps: int,
+    sample_repeat: int,
+    batch_repeat: int,
+    data_queue: queue_lib.AbstractDataQueue[
+        list[TrainExample] | common.RepeatIterable | None
+    ],
+    async_loading: bool = False,
+    mode: metrics_logger.Mode = metrics_logger.Mode.TRAIN,
+) -> None:
+
+  # === LCM 作为服务批大小（不考虑对齐与上下限）===
+  service_target_bs = _lcm3(
+      self.batch_config.rollout_micro_batch_size,
+      self.batch_config.ref_logps_micro_batch_size,
+      self.batch_config.old_logps_micro_batch_size,
+  )
+
+  buf: list[_TrainingInputT] = []
+  buf_sizes: list[int] = []   # 每个训练 micro 的样本数
+  buf_B = 0                   # 聚合的总样本数（未 repeat）
+  example_list: list[TrainExample] = []
+  consumed_steps = 0          # 按“训练 micro 个数”计数（不是样本条数）
+
+  def _flush(force: bool = False):
+    nonlocal buf, buf_sizes, buf_B, example_list
+    if not buf:
+      return
+    if (not force) and (buf_B < service_target_bs):
+      return
+
+    # 1) 合并多个训练 micro 成 single batch（未 repeat）
+    merged: dict = {}
+    keys = buf[0].keys()
+    for k in keys:
+      merged[k] = buf[0][k]
+    for i in range(1, len(buf)):
+      for k in keys:
+        a, b = merged[k], buf[i][k]
+        if isinstance(a, list):
+          merged[k] = a + b
+        else:
+          merged[k] = jnp.concatenate([jnp.asarray(a), jnp.asarray(b)], axis=0)
+
+    # 2) 一次性 repeat G（等价于逐 micro repeat 再拼）
+    merged_repeated = jax.tree.map(
+        lambda x: np.repeat(x, sample_repeat, axis=0),
+        merged,
+    )  # [sum(B_i)] -> [sum(B_i) * G]
+
+    # 3) 大批执行（内部按各阶段 micro 重新切分）
+    with jax.profiler.StepTraceAnnotation(
+        "sampler",
+        step_num=self._train_steps if mode == metrics_logger.Mode.TRAIN else self._eval_steps,
+    ):
+      big_example = self._generate_and_compute_advantage(merged_repeated, mode)
+
+    # 4) 按原训练 micro 边界（×G）切回，构造多个 TrainExample
+    offset = 0
+    for n in buf_sizes:
+      token_sl = slice(offset * sample_repeat, (offset + n) * sample_repeat)
+      te_small = TrainExample(
+          prompt_ids=big_example.prompt_ids[token_sl],
+          prompt_mask=big_example.prompt_mask[token_sl],
+          completion_ids=big_example.completion_ids[token_sl],
+          completion_mask=big_example.completion_mask[token_sl],
+          ref_per_token_logps=None if big_example.ref_per_token_logps is None else big_example.ref_per_token_logps[token_sl],
+          advantages=big_example.advantages[token_sl],  # 每序列一个 advantage → 跟随 repeat 后的序列切
+          old_per_token_logps=None if big_example.old_per_token_logps is None else big_example.old_per_token_logps[token_sl],
+      )
+      example_list.append(te_small)
+      offset += n
+
+    # 5) 入队（与原逻辑一致）
+    if not async_loading:
+      data_queue.put(common.RepeatIterable(example_list, batch_repeat))
+      example_list = []
     else:
-        prompts_pad, completions_pad = prompts, completions
+      for te_small in example_list:
+        data_queue.put([te_small])
+      if batch_repeat > 1:
+        data_queue.put(common.RepeatIterable(example_list, batch_repeat - 1))
+      example_list = []
 
-    # 2) reshape 成 [chunks, mbs, ...]
-    p = prompts_pad.reshape(chunks, mbs, *prompts.shape[1:])
-    c = completions_pad.reshape(chunks, mbs, *completions.shape[1:])
+    # 6) 清空缓冲
+    buf.clear()
+    buf_sizes.clear()
+    buf_B = 0
 
-    def body(carry, pc):
-        pt, ct = pc  # [mbs, ...]
-        logps = common.compute_per_token_logps(model, pt, ct, pad_id, eos_id)
-        return carry, logps  # [mbs, T]
-    _, outs = jax.lax.scan(body, None, (p, c))  # [chunks, mbs, T]
+  try:
+    while True:
+      # 从 checkpoint 恢复时快进（原逻辑保留）
+      while (mode == metrics_logger.Mode.TRAIN and self._train_steps < self._last_train_step):
+        next(iterator)
+        self._train_steps += 1
 
-    outs = outs.reshape(chunks * mbs, *outs.shape[2:])  # [B_pad, T]
-    return outs[:B, ...]  # 去掉pad
+      # 取一个“训练 microbatch”
+      example = next(iterator)
+      B = len(example["prompts"])
+      buf.append(example)
+      buf_sizes.append(B)
+      buf_B += B
+      consumed_steps += 1
+
+      # 达到 LCM 就 flush 一次
+      _flush(force=False)
+
+      # 步数计数（原逻辑保留）
+      if mode == metrics_logger.Mode.TRAIN:
+        self._train_steps += 1
+      else:
+        self._eval_steps += 1
+
+      # 只推进固定个数的 micro 时，达到上限强制 flush 并返回
+      if proceed_num_steps > 0 and consumed_steps >= proceed_num_steps:
+        _flush(force=True)
+        return
+
+  except StopIteration as e:
+    if proceed_num_steps > 0:
+      raise e
+    else:
+      _flush(force=True)
+      return
+  finally:
+    data_queue.put(None)
 ```
 
-把这个函数替换方案 A 中的循环实现即可。
-**优点**：只编译一次，长跑更稳定。
-**缺点**：代码稍复杂。
+---
+
+## 使用说明 / 约束
+
+* **聚合大小** = `lcm(rollout_micro, ref_micro, old_micro)`；可能会比单一 micro 大不少（比如三者互素时），这是你要求的“无上下限、不考虑对齐”的直接实现。
+* 进入 `_generate_and_compute_advantage` 后，各阶段会**按各自 micro** 切分执行。
+* 训练侧仍按原训练 micro 粒度入队；μ 次通过 `RepeatIterable` 复用同一批。
+* 本实现**不做 token 预算兜底**，如果你的样本长度波动很大、ref/old 是全序列前向，建议后续加个简单兜底（否则仍可能 OOM）。
 
 ---
 
-# 注意点 & 踩坑清单
-
-1. **mask/positions 一致**：我们不动 `common.compute_per_token_logps`，保证和 new/ref/old 的对齐逻辑完全一致。
-2. **dtype 稳定**：内部 `log_softmax` 用 fp32（你现在就是这样风格），避免 NaN。
-3. **EOS 截断**：仍使用 `make_completion_mask`，不影响 micro-batch。
-4. **mesh**：切批前后仍在 `with role_to_mesh[...]` 上下文里；不要跨 mesh 传大张量。
-5. **offload**：保持你现在的 load→compute→offload 包裹不变；切批只在 compute 内部生效。
-6. **mbs 固定**：建议配置后固定不变，避免反复编译。
-7. **尾块**：方案 A 直接裁切；方案 B 通过 pad→scan→裁掉，实现一次编译。
-8. **并发/队列**：不改变你当前的队列与异步流水（`SimpleDataQueue` / `ThreadPoolExecutor`）；micro-batch 是每次“打分调用”的内部细化。
-9. **兼容 vLLM rollout**：如果 rollout 引擎是 vLLM，自身可能就有 batching 行为；在你封装的 `rollout.get_per_token_logps` 里优先判断是否能直接批内处理，不能再 fallback 到上面 micro-batch。
-
----
-
-# 验证 & 指标
-
-* **数值一致性**：开/关 micro-batch 计算的 `ref/old logprob` 应 bitwise（或 1e-6 级别）一致。
-* **吞吐与显存**：记录 `HBM peak`、`throughput (tokens/s)`；调不同 mbs 找平衡点。
-* **编译次数**：用 `jax.profiler` 看 XLA 编译是否因动态 batch 重复触发；如频繁，迁移到方案 B。
-
----
-
-# 渐进式落地顺序
-
-1. 先上 **方案 A**（入口层 Python 循环），加两个配置项，验证数值与显存。
-2. 再把 ref 路径换成 **方案 B**（scan + pad），观察编译次数下降。
-3. rollout 路径按需替换为方案 B（若 vLLM 不需要可跳过）。
-4. 加 metrics：`ref/old mbs 实际值`、`ref/old forward latency`、`num_chunks`，便于排查。
-
----
-
-要不要我直接给你做两份最小 PR diff（“只改 InferenceWorker”和“只改 VanillaRollout”）？
-你贴出配置对象在哪儿取值，我就把 `mbs` 的读取也一并接好。
