@@ -1,4 +1,4 @@
-# VERL Benchmark Setup Guide
+# veRL Benchmark Setup Guide
 
 
 ## Step 1: Configure Docker Root Directory
