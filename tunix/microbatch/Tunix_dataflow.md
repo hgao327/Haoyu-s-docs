@@ -1,6 +1,6 @@
 # Tunix GRPO Data Flow Analysis
 
-## Data Flow Timeline: From Production to Consumption
+## Data Flow
 
 Tunix is essentially a producer-consumer pattern that interacts with data through a data queue. This is consistent with the analysis in multi-turn: RLHF can essentially be divided into frontend and backend. The frontend is broadly trajectory generation, while the backend takes the generated training data for actual training.
 
