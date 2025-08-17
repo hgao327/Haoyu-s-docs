@@ -280,7 +280,7 @@ def _prepare_data(
 * **聚合大小** = `lcm(rollout_micro, ref_micro, old_micro)`；可能会比单一 micro 大不少（比如三者互素时），这是你要求的“无上下限、不考虑对齐”的直接实现。
 * 进入 `_generate_and_compute_advantage` 后，各阶段会**按各自 micro** 切分执行。
 * 训练侧仍按原训练 micro 粒度入队；μ 次通过 `RepeatIterable` 复用同一批。
-* 本实现**不做 token 预算兜底**，如果你的样本长度波动很大、ref/old 是全序列前向，建议后续加个简单兜底（否则仍可能 OOM）。
+* 本实现**不做 token 预算兜底**，如果样本长度波动很大、ref/old 是全序列前向，可能出现OOM error。后续会加入兜底逻辑，并优化至token级别拆分。
 
 ---
 
