@@ -1,4 +1,4 @@
-### 1. What is this architecture actually for?
+## 1. What is this architecture actually for?
 
 An agentic RL system ultimately wants to do this:
 
